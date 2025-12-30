@@ -18,6 +18,7 @@ type Settings struct {
 	ServerName     string // needed for PIA
 	CanPortForward bool   // needed for PIA
 	ListeningPort  uint16
+	NumPorts       uint8 // number of ports to request (1-6 for ProtonVPN)
 	Username       string // needed for PIA
 	Password       string // needed for PIA
 }
@@ -32,6 +33,7 @@ func (s Settings) Copy() (copied Settings) {
 	copied.ServerName = s.ServerName
 	copied.CanPortForward = s.CanPortForward
 	copied.ListeningPort = s.ListeningPort
+	copied.NumPorts = s.NumPorts
 	copied.Username = s.Username
 	copied.Password = s.Password
 	return copied
@@ -47,6 +49,7 @@ func (s *Settings) OverrideWith(update Settings) {
 	s.ServerName = gosettings.OverrideWithComparable(s.ServerName, update.ServerName)
 	s.CanPortForward = gosettings.OverrideWithComparable(s.CanPortForward, update.CanPortForward)
 	s.ListeningPort = gosettings.OverrideWithComparable(s.ListeningPort, update.ListeningPort)
+	s.NumPorts = gosettings.OverrideWithComparable(s.NumPorts, update.NumPorts)
 	s.Username = gosettings.OverrideWithComparable(s.Username, update.Username)
 	s.Password = gosettings.OverrideWithComparable(s.Password, update.Password)
 }

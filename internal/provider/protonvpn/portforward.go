@@ -34,28 +34,91 @@ func (p *Provider) PortForward(ctx context.Context, objects utils.PortForwardObj
 	logger := objects.Logger
 
 	logger.Info("gateway external IPv4 address is " + externalIPv4Address.String())
-	const internalPort, externalPort = 0, 1
 	const lifetime = 60 * time.Second
 
-	_, _, assignedUDPExternalPort, assignedLifetime, err := client.AddPortMapping(ctx, objects.Gateway, "udp",
-		internalPort, externalPort, lifetime)
-	if err != nil {
-		return nil, fmt.Errorf("adding UDP port mapping: %w", err)
+	numPorts := objects.NumPorts
+	if numPorts < 1 || numPorts > 6 {
+		return nil, fmt.Errorf("number of ports must be between 1 and 6, got %d", numPorts)
 	}
-	checkLifetime(logger, "UDP", lifetime, assignedLifetime)
 
-	_, _, assignedTCPExternalPort, assignedLifetime, err := client.AddPortMapping(ctx, objects.Gateway, "tcp",
-		internalPort, externalPort, lifetime)
+	logger.Info(fmt.Sprintf("requesting %d port(s)", numPorts))
+	ports = make([]uint16, 0, numPorts)
+
+	// First port: request symmetrical mapping (internal=0, external=0 for automatic)
+	// This is the free port that doesn't count toward the 5-port quota
+	const firstInternalPort, firstExternalPort = 0, 0
+	logger.Info(fmt.Sprintf("requesting port 1 (symmetrical): internal=%d external=%d", firstInternalPort, firstExternalPort))
+
+	_, _, assignedUDP1ExternalPort, assignedLifetime, err := client.AddPortMapping(ctx, objects.Gateway, "udp",
+		firstInternalPort, firstExternalPort, lifetime)
 	if err != nil {
-		return nil, fmt.Errorf("adding TCP port mapping: %w", err)
+		return nil, fmt.Errorf("adding UDP port mapping 1: %w", err)
 	}
-	checkLifetime(logger, "TCP", lifetime, assignedLifetime)
+	checkLifetime(logger, "UDP 1", lifetime, assignedLifetime)
 
-	checkExternalPorts(logger, assignedUDPExternalPort, assignedTCPExternalPort)
+	_, assignedTCP1InternalPort, assignedTCP1ExternalPort, assignedLifetime, err := client.AddPortMapping(ctx, objects.Gateway, "tcp",
+		firstInternalPort, firstExternalPort, lifetime)
+	if err != nil {
+		return nil, fmt.Errorf("adding TCP port mapping 1: %w", err)
+	}
+	checkLifetime(logger, "TCP 1", lifetime, assignedLifetime)
 
-	p.portForwarded = assignedTCPExternalPort
+	if assignedTCP1InternalPort == assignedTCP1ExternalPort {
+		logger.Info(fmt.Sprintf("port 1: %d (symmetrical, no redirect needed)", assignedTCP1ExternalPort))
+	} else {
+		logger.Info(fmt.Sprintf("port 1: internal=%d external=%d", assignedTCP1InternalPort, assignedTCP1ExternalPort))
+	}
+	checkExternalPorts(logger, assignedUDP1ExternalPort, assignedTCP1ExternalPort)
+	ports = append(ports, assignedTCP1ExternalPort)
 
-	return []uint16{assignedTCPExternalPort}, nil
+	// Additional ports: use high internal port numbers (50001, 50002, etc.)
+	// These count toward the 5-port quota
+	const baseInternalPort = 50001
+	for i := uint8(1); i < numPorts; i++ {
+		portNum := i + 1
+		internalPort := uint16(baseInternalPort + uint16(i-1))
+		const externalPort = 0 // automatic assignment
+
+		logger.Info(fmt.Sprintf("requesting port %d: internal=%d external=%d", portNum, internalPort, externalPort))
+
+		_, _, assignedUDPExternalPort, assignedLifetime, err := client.AddPortMapping(ctx, objects.Gateway, "udp",
+			internalPort, externalPort, lifetime)
+		if err != nil {
+			return nil, fmt.Errorf("adding UDP port mapping %d: %w", portNum, err)
+		}
+		checkLifetime(logger, fmt.Sprintf("UDP %d", portNum), lifetime, assignedLifetime)
+
+		_, assignedTCPInternalPort, assignedTCPExternalPort, assignedLifetime, err := client.AddPortMapping(ctx, objects.Gateway, "tcp",
+			internalPort, externalPort, lifetime)
+		if err != nil {
+			return nil, fmt.Errorf("adding TCP port mapping %d: %w", portNum, err)
+		}
+		checkLifetime(logger, fmt.Sprintf("TCP %d", portNum), lifetime, assignedLifetime)
+
+		logger.Info(fmt.Sprintf("port %d: internal=%d external=%d", portNum, assignedTCPInternalPort, assignedTCPExternalPort))
+		checkExternalPorts(logger, assignedUDPExternalPort, assignedTCPExternalPort)
+
+		// Set up iptables redirect if internal != external
+		if assignedTCPInternalPort != assignedTCPExternalPort {
+			logger.Info(fmt.Sprintf("setting up iptables redirect %d -> %d", assignedTCPInternalPort, assignedTCPExternalPort))
+			if objects.PortAllower != nil {
+				err := objects.PortAllower.RedirectPort(ctx, objects.Interface,
+					assignedTCPInternalPort, assignedTCPExternalPort)
+				if err != nil {
+					return nil, fmt.Errorf("redirecting port %d: %w", portNum, err)
+				}
+			} else {
+				logger.Warn("cannot redirect port: PortAllower not provided")
+			}
+		}
+
+		ports = append(ports, assignedTCPExternalPort)
+	}
+
+	p.portsForwarded = ports
+	logger.Info(fmt.Sprintf("ports forwarded are %v", ports))
+
+	return ports, nil
 }
 
 func checkLifetime(logger utils.Logger, protocol string,
@@ -91,16 +154,17 @@ func (p *Provider) KeepPortForward(ctx context.Context,
 		case <-timer.C:
 		}
 
-		objects.Logger.Debug("refreshing port forward since 45 seconds have elapsed")
+		objects.Logger.Debug("refreshing port forwards since 45 seconds have elapsed")
 		networkProtocols := []string{"udp", "tcp"}
-		const internalPort = 0
 		const lifetime = 60 * time.Second
 
+		// Refresh first port (symmetrical, internal=0)
+		const firstInternalPort = 0
 		for _, networkProtocol := range networkProtocols {
 			_, _, assignedExternalPort, assignedLiftetime, err := client.AddPortMapping(ctx, objects.Gateway, networkProtocol,
-				internalPort, p.portForwarded, lifetime)
+				firstInternalPort, p.portsForwarded[0], lifetime)
 			if err != nil {
-				return fmt.Errorf("adding port mapping: %w", err)
+				return fmt.Errorf("adding port mapping 1: %w", err)
 			}
 
 			if assignedLiftetime != lifetime {
@@ -109,13 +173,37 @@ func (p *Provider) KeepPortForward(ctx context.Context,
 					assignedLiftetime, lifetime))
 			}
 
-			if p.portForwarded != assignedExternalPort {
-				return fmt.Errorf("%w: %d changed to %d",
-					ErrExternalPortChanged, p.portForwarded, assignedExternalPort)
+			if p.portsForwarded[0] != assignedExternalPort {
+				return fmt.Errorf("%w: port 1 %d changed to %d",
+					ErrExternalPortChanged, p.portsForwarded[0], assignedExternalPort)
 			}
 		}
 
-		objects.Logger.Debug(fmt.Sprintf("port forwarded %d maintained", p.portForwarded))
+		// Refresh additional ports (use same internal ports as initial request)
+		const baseInternalPort = 50001
+		for i := 1; i < len(p.portsForwarded); i++ {
+			internalPort := uint16(baseInternalPort + uint16(i-1))
+			for _, networkProtocol := range networkProtocols {
+				_, _, assignedExternalPort, assignedLiftetime, err := client.AddPortMapping(ctx, objects.Gateway, networkProtocol,
+					internalPort, p.portsForwarded[i], lifetime)
+				if err != nil {
+					return fmt.Errorf("adding port mapping %d: %w", i+1, err)
+				}
+
+				if assignedLiftetime != lifetime {
+					logger.Warn(fmt.Sprintf("assigned lifetime %s differs"+
+						" from requested lifetime %s",
+						assignedLiftetime, lifetime))
+				}
+
+				if p.portsForwarded[i] != assignedExternalPort {
+					return fmt.Errorf("%w: port %d %d changed to %d",
+						ErrExternalPortChanged, i+1, p.portsForwarded[i], assignedExternalPort)
+				}
+			}
+		}
+
+		objects.Logger.Debug(fmt.Sprintf("ports forwarded %v maintained", p.portsForwarded))
 
 		timer.Reset(refreshTimeout)
 	}

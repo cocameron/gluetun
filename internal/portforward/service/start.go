@@ -41,6 +41,9 @@ func (s *Service) Start(ctx context.Context) (runError <-chan error, err error) 
 		CanPortForward: s.settings.CanPortForward,
 		Username:       s.settings.Username,
 		Password:       s.settings.Password,
+		NumPorts:       s.settings.NumPorts,
+		PortAllower:    s.portAllower,
+		Interface:      s.settings.Interface,
 	}
 	ports, err := s.settings.PortForwarder.PortForward(ctx, obj)
 	if err != nil {

@@ -41,6 +41,10 @@ type PortForwarding struct {
 	// forwarded port. The redirection is disabled if it is set to 0, which
 	// is its default as well.
 	ListeningPort *uint16 `json:"listening_port"`
+	// NumPorts is the number of ports to request. For ProtonVPN, this can be
+	// 1-6 (1 symmetrical + up to 5 additional ports). Defaults to 1.
+	// It cannot be nil in the internal state.
+	NumPorts *uint8 `json:"num_ports"`
 	// Username is only used for Private Internet Access port forwarding.
 	Username string `json:"username"`
 	// Password is only used for Private Internet Access port forwarding.
@@ -84,6 +88,11 @@ func (p PortForwarding) Validate(vpnProvider string) (err error) {
 		}
 	}
 
+	// Validate NumPorts
+	if *p.NumPorts < 1 || *p.NumPorts > 6 {
+		return fmt.Errorf("number of ports must be between 1 and 6, got %d", *p.NumPorts)
+	}
+
 	return nil
 }
 
@@ -95,6 +104,7 @@ func (p *PortForwarding) Copy() (copied PortForwarding) {
 		UpCommand:     gosettings.CopyPointer(p.UpCommand),
 		DownCommand:   gosettings.CopyPointer(p.DownCommand),
 		ListeningPort: gosettings.CopyPointer(p.ListeningPort),
+		NumPorts:      gosettings.CopyPointer(p.NumPorts),
 		Username:      p.Username,
 		Password:      p.Password,
 	}
@@ -107,6 +117,7 @@ func (p *PortForwarding) OverrideWith(other PortForwarding) {
 	p.UpCommand = gosettings.OverrideWithPointer(p.UpCommand, other.UpCommand)
 	p.DownCommand = gosettings.OverrideWithPointer(p.DownCommand, other.DownCommand)
 	p.ListeningPort = gosettings.OverrideWithPointer(p.ListeningPort, other.ListeningPort)
+	p.NumPorts = gosettings.OverrideWithPointer(p.NumPorts, other.NumPorts)
 	p.Username = gosettings.OverrideWithComparable(p.Username, other.Username)
 	p.Password = gosettings.OverrideWithComparable(p.Password, other.Password)
 }
@@ -118,6 +129,7 @@ func (p *PortForwarding) setDefaults() {
 	p.UpCommand = gosettings.DefaultPointer(p.UpCommand, "")
 	p.DownCommand = gosettings.DefaultPointer(p.DownCommand, "")
 	p.ListeningPort = gosettings.DefaultPointer(p.ListeningPort, 0)
+	p.NumPorts = gosettings.DefaultPointer(p.NumPorts, 1)
 }
 
 func (p PortForwarding) String() string {
@@ -130,6 +142,8 @@ func (p PortForwarding) toLinesNode() (node *gotree.Node) {
 	}
 
 	node = gotree.New("Automatic port forwarding settings:")
+
+	node.Appendf("Number of ports to request: %d", *p.NumPorts)
 
 	listeningPort := "disabled"
 	if *p.ListeningPort != 0 {
@@ -191,6 +205,11 @@ func (p *PortForwarding) read(r *reader.Reader) (err error) {
 		reader.ForceLowercase(false))
 
 	p.ListeningPort, err = r.Uint16Ptr("VPN_PORT_FORWARDING_LISTENING_PORT")
+	if err != nil {
+		return err
+	}
+
+	p.NumPorts, err = r.Uint8Ptr("VPN_PORT_FORWARDING_NUM_PORTS")
 	if err != nil {
 		return err
 	}

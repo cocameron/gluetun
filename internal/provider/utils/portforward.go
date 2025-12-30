@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"net/http"
 	"net/netip"
 )
@@ -25,6 +26,19 @@ type PortForwardObjects struct {
 	Username string
 	// Password is used by Private Internet Access for port forwarding.
 	Password string
+	// NumPorts is the number of ports to request (used by ProtonVPN, 1-6).
+	NumPorts uint8
+	// PortAllower provides firewall control for iptables redirects (used by ProtonVPN).
+	PortAllower PortAllower
+	// Interface is the VPN interface name (used by ProtonVPN for iptables).
+	Interface string
+}
+
+// PortAllower provides methods to configure firewall rules for port forwarding.
+type PortAllower interface {
+	// RedirectPort sets up an iptables redirect from sourcePort to destinationPort.
+	RedirectPort(ctx context.Context, intf string, sourcePort,
+		destinationPort uint16) (err error)
 }
 
 type Routing interface {
