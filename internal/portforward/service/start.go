@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/qdm12/gluetun/internal/natpmp"
 	"github.com/qdm12/gluetun/internal/netlink"
 	"github.com/qdm12/gluetun/internal/provider/utils"
 )
@@ -44,6 +45,7 @@ func (s *Service) Start(ctx context.Context) (runError <-chan error, err error) 
 		NumPorts:       s.settings.NumPorts,
 		PortAllower:    s.portAllower,
 		Interface:      s.settings.Interface,
+		NATClient:      natpmp.New(),
 	}
 	ports, err := s.settings.PortForwarder.PortForward(ctx, obj)
 	if err != nil {

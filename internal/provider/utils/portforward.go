@@ -4,7 +4,22 @@ import (
 	"context"
 	"net/http"
 	"net/netip"
+	"time"
 )
+
+// NATPMPClient defines the interface for NAT-PMP client operations.
+// This allows for dependency injection and mocking in tests.
+type NATPMPClient interface {
+	ExternalAddress(ctx context.Context, gateway netip.Addr) (
+		durationSinceStartOfEpoch time.Duration,
+		externalIPv4Address netip.Addr, err error)
+
+	AddPortMapping(ctx context.Context, gateway netip.Addr,
+		protocol string, internalPort, requestedExternalPort uint16,
+		lifetime time.Duration) (durationSinceStartOfEpoch time.Duration,
+		assignedInternalPort, assignedExternalPort uint16, assignedLifetime time.Duration,
+		err error)
+}
 
 // PortForwardObjects contains fields that may or may not need to be set
 // depending on the port forwarding provider code.
@@ -32,6 +47,8 @@ type PortForwardObjects struct {
 	PortAllower PortAllower
 	// Interface is the VPN interface name (used by ProtonVPN for iptables).
 	Interface string
+	// NATClient is the NAT-PMP client (used by ProtonVPN).
+	NATClient NATPMPClient
 }
 
 // PortAllower provides methods to configure firewall rules for port forwarding.
